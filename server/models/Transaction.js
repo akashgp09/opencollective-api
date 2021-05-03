@@ -13,10 +13,11 @@ import { getFxRate } from '../lib/currency';
 import { toNegative } from '../lib/math';
 import { calcFee } from '../lib/payments';
 import { stripHTML } from '../lib/sanitize-html';
-import sequelize, { DataTypes } from '../lib/sequelize';
+import sequelize, { DataTypes, Op } from '../lib/sequelize';
 import { exportToCSV } from '../lib/utils';
 
 import CustomDataTypes from './DataTypes';
+import { TransactionSettlementStatus } from './TransactionSettlement';
 
 const debug = debugLib('models:Transaction');
 
@@ -337,6 +338,7 @@ function defineModel() {
           type: this.type,
           TransactionGroup: this.TransactionGroup,
           kind: TransactionKind.PLATFORM_TIP,
+          isDebt: { [Op.not]: true },
         },
       });
     }
@@ -350,6 +352,7 @@ function defineModel() {
         FromCollectiveId: this.CollectiveId,
         TransactionGroup: this.TransactionGroup,
         kind: this.kind,
+        isDebt: this.isDebt,
       },
     });
   };
@@ -575,7 +578,12 @@ function defineModel() {
     return Promise.mapSeries(transactions, t => Transaction.create(t, opts)).then(results => results[index]);
   };
 
-  Transaction.createFeesOnTopTransaction = async ({ transaction, host }) => {
+  /**
+   * Creates platform tip transactions from a given transaction.
+   * @param {Transaction} The actual transaction
+   * @param {sequelize.Transaction} A Postgres transaction. Must be provided to make sure we never end up in an inconsistent DB state.
+   */
+  Transaction.createFeesOnTopTransaction = async (transaction, host) => {
     if (!transaction.data?.isFeesOnTop) {
       throw new Error('This transaction does not have fees on top');
     } else if (!transaction.platformFeeInHostCurrency) {
@@ -588,7 +596,7 @@ function defineModel() {
       ? toNegative(Math.round(transaction.paymentProcessorFeeInHostCurrency * feeOnTopPercent))
       : 0;
     const platformCurrencyFxRate = await getFxRate(transaction.currency, FEES_ON_TOP_TRANSACTION_PROPERTIES.currency);
-    const donationTransaction = defaultsDeep(
+    const platformTipTransaction = defaultsDeep(
       {},
       FEES_ON_TOP_TRANSACTION_PROPERTIES,
       {
@@ -607,6 +615,7 @@ function defineModel() {
         // This is always 1 because OpenCollective and OpenCollective Inc (Host) are in USD.
         hostCurrencyFxRate: 1,
         TransactionGroup: transaction.TransactionGroup,
+        isDebt: false,
         data: {
           hostToPlatformFxRate: await getFxRate(transaction.hostCurrency, FEES_ON_TOP_TRANSACTION_PROPERTIES.currency),
           feeOnTopPaymentProcessorFee,
@@ -616,7 +625,23 @@ function defineModel() {
       transaction,
     );
 
-    await Transaction.createDoubleEntry(donationTransaction);
+    await Transaction.createDoubleEntry(platformTipTransaction);
+
+    // Create debt transaction
+    const debtTransactionData = {
+      ...platformTipTransaction,
+      CollectiveId: host?.id || transaction.CollectiveId,
+      FromCollectiveId: FEES_ON_TOP_TRANSACTION_PROPERTIES.CollectiveId,
+      HostCollectiveId: FEES_ON_TOP_TRANSACTION_PROPERTIES.CollectiveId,
+      kind: TransactionKind.PLATFORM_TIP,
+      isDebt: true,
+    };
+
+    const debtTransaction = await Transaction.createDoubleEntry(debtTransactionData);
+
+    // Create settlement
+    const settlementStatus = TransactionSettlementStatus.OWED;
+    await models.TransactionSettlement.createForTransaction(debtTransaction, settlementStatus);
 
     // Deduct the paymentProcessorFee we considered part of the feeOnTop donation
     transaction.paymentProcessorFeeInHostCurrency =
@@ -629,7 +654,7 @@ function defineModel() {
     // Reset the platformFee because we're accounting for this value in a separate set of transactions
     transaction.platformFeeInHostCurrency = 0;
 
-    return { transaction, donationTransaction };
+    return { transaction, platformTipTransaction };
   };
 
   /**
@@ -675,7 +700,7 @@ function defineModel() {
 
     // Separate donation transaction and remove platformFee from the main transaction
     if (transaction.data?.isFeesOnTop && transaction.platformFeeInHostCurrency) {
-      transaction = (await Transaction.createFeesOnTopTransaction({ transaction, host })).transaction;
+      transaction = (await Transaction.createFeesOnTopTransaction(transaction, host)).transaction;
     }
 
     // populate netAmountInCollectiveCurrency for financial contributions

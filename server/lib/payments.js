@@ -9,6 +9,7 @@ import status from '../constants/order_status';
 import { PAYMENT_METHOD_TYPE } from '../constants/paymentMethods';
 import roles from '../constants/roles';
 import tiers from '../constants/tiers';
+import { TransactionKind } from '../constants/transaction-kind';
 import { FEES_ON_TOP_TRANSACTION_PROPERTIES } from '../constants/transactions';
 import models, { Op } from '../models';
 import paymentProviders from '../paymentProviders';
@@ -209,28 +210,41 @@ export async function createRefundTransaction(transaction, refundedPaymentProces
     return refund;
   };
 
-  const creditTransactionRefund = buildRefund(creditTransaction);
-
-  if (transaction.data?.isFeesOnTop) {
-    const feeOnTopTransaction = await transaction.getPlatformTipTransaction();
-    const feeOnTopRefund = buildRefund(feeOnTopTransaction);
-    const feeOnTopRefundTransaction = await models.Transaction.createDoubleEntry(feeOnTopRefund);
-    await associateTransactionRefundId(feeOnTopTransaction, feeOnTopRefundTransaction, data);
+  let platformTipTransaction, platformTipRefund, platformTipDebtTransaction;
+  if (transaction.hasPlatformTip()) {
+    platformTipTransaction = await transaction.getPlatformTipTransaction();
+    platformTipRefund = buildRefund(platformTipTransaction);
   }
 
+  // Refund platform tip
+  if (platformTipRefund) {
+    const feeOnTopRefundTransaction = await models.Transaction.createDoubleEntry(platformTipRefund);
+    await associateTransactionRefundId(platformTipTransaction, feeOnTopRefundTransaction, data);
+
+    // Platform tip debt - refund and update settlement status
+    const settlementWhere = { TransactionGroup: transaction.TransactionGroup, kind: TransactionKind.PLATFORM_TIP };
+    const settlement = await models.TransactionSettlement.findOne({ where: settlementWhere });
+    await settlement.revertSettlementForRefund(feeOnTopRefundTransaction);
+
+    // TODO platformTipDebtTransaction
+  }
+
+  // Refund contribution
+  const creditTransactionRefund = buildRefund(creditTransaction);
   const refundTransaction = await models.Transaction.createDoubleEntry(creditTransactionRefund);
-  return await associateTransactionRefundId(transaction, refundTransaction, data);
+  return associateTransactionRefundId(transaction, refundTransaction, data);
 }
 
 export async function associateTransactionRefundId(transaction, refund, data) {
+  // TODO: Using the `id` as order here is not reliable, we should rather filter results to make sure we get the right transaction
   const [tr1, tr2, tr3, tr4] = await models.Transaction.findAll({
     order: ['id'],
     where: {
       [Op.or]: [{ TransactionGroup: transaction.TransactionGroup }, { TransactionGroup: refund.TransactionGroup }],
     },
   });
-  // After refunding a transaction, in some cases the data may
-  // be update as well(stripe data changes after refunds)
+
+  // After refunding a transaction, in some cases the data may be updated as well (stripe data changes after refunds)
   if (data) {
     tr1.data = data;
     tr2.data = data;

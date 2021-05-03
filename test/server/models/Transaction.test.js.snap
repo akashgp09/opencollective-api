@@ -7,3 +7,15 @@ exports[`server/models/Transaction createFromPayload creates a double entry tran
 | CONTRIBUTION | DEBIT  | -12100                        | EUR      | NULL | -500                      | -300                              | -2100     | -8700  | €121 for Vegan Burgers including €21 VAT |
 | CONTRIBUTION | CREDIT | 8700                          | EUR      | #2   | -500                      | -300                              | -2100     | 12100  | €121 for Vegan Burgers including €21 VAT |"
 `;
+
+exports[`server/models/Transaction fees on top should create an aditional pair of transactions between contributor and Open Collective Inc 1`] = `
+"
+| kind         | type   | netAmountInCollectiveCurrency | currency | Host            | platformFeeInHostCurrency | paymentProcessorFeeInHostCurrency | taxAmount | amount | description                               |
+| ------------ | ------ | ----------------------------- | -------- | --------------- | ------------------------- | --------------------------------- | --------- | ------ | ----------------------------------------- |
+| PLATFORM_TIP | DEBIT  | -1000                         | USD      | NULL            | 0                         | -18                               |           | -982   | Financial contribution to Open Collective |
+| PLATFORM_TIP | CREDIT | 982                           | USD      | Open Collective | 0                         | -18                               |           | 1000   | Financial contribution to Open Collective |
+| PLATFORM_TIP | DEBIT  | -1000                         | USD      | Open Collective | 0                         | -18                               |           | -982   | Financial contribution to Open Collective |
+| PLATFORM_TIP | CREDIT | 982                           | USD      | Open Collective | 0                         | -18                               |           | 1000   | Financial contribution to Open Collective |
+| CONTRIBUTION | DEBIT  | -10000                        | USD      | NULL            | 0                         | -182                              |           | -9318  | $100 donation to Merveilles               |
+| CONTRIBUTION | CREDIT | 9318                          | USD      | Random Host     | 0                         | -182                              |           | 10000  | $100 donation to Merveilles               |"
+`;

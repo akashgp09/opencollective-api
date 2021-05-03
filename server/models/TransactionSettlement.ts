@@ -2,7 +2,7 @@ import { groupBy } from 'lodash';
 
 import { TransactionKind } from '../constants/transaction-kind';
 import restoreSequelizeAttributesOnClass from '../lib/restore-sequelize-attributes-on-class';
-import sequelize, { DataTypes, Model, Op } from '../lib/sequelize';
+import sequelize, { DataTypes, Model, Op, Transaction as SQLTransaction } from '../lib/sequelize';
 
 import Collective from './Collective';
 import Transaction from './Transaction';
@@ -45,6 +45,34 @@ class TransactionSettlement
     super(...args);
     restoreSequelizeAttributesOnClass(new.target, this);
   }
+
+  // ---- Instance methods ----
+
+  /**
+   * Reverts a settlement after a refund
+   */
+  async revertSettlementForRefund(refundTransaction): Promise<void> {
+    if (this.status === TransactionSettlementStatus.OWED) {
+      // Transaction has not been accounted for yet, we can directly delete it
+      await this.destroy();
+    } else if (this.status === TransactionSettlementStatus.INVOICED) {
+      // Remove transaction from the invoice if not paid already
+      await sequelize.transaction(async sqlTransaction => {
+        const expense = await this.getExpense({ include: [{ association: 'items' }], transaction: sqlTransaction });
+        const item = expense.items.find(item => false); // TODO(LedgerRefactor): find a way to retrieve the correct item
+        await expense.update({ amount: expense.amount - item.amount }, { transaction: sqlTransaction });
+        await item.destroy({ transaction: sqlTransaction });
+      });
+    } else if (this.status === TransactionSettlementStatus.SETTLED) {
+      // We have to revert the platform tip and mark it as owed from Open Collective to the host
+      // TODO
+      await TransactionSettlement.createForTransaction(refundTransaction);
+    } else {
+      throw new Error(`Don't know how to revert this status: ${this.status}`);
+    }
+  }
+
+  // ---- Static methods ----
 
   static async getAccountsWithOwedSettlements(): Promise<typeof Collective[]> {
     return sequelize.query(
@@ -120,12 +148,18 @@ class TransactionSettlement
   static async createForTransaction(
     transaction: typeof Transaction,
     status = TransactionSettlementStatus.OWED,
+    sqlTransaction: SQLTransaction = null,
   ): Promise<TransactionSettlement> {
-    return TransactionSettlement.create({
-      TransactionGroup: transaction.TransactionGroup,
-      kind: transaction.kind,
-      status,
-    });
+    return TransactionSettlement.create(
+      {
+        TransactionGroup: transaction.TransactionGroup,
+        kind: transaction.kind,
+        status,
+      },
+      {
+        transaction: sqlTransaction,
+      },
+    );
   }
 
   static async attachStatusesToTransactions(transactions: typeof Transaction[]): Promise<void> {

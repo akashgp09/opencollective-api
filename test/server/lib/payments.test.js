@@ -394,15 +394,21 @@ describe('server/lib/payments', () => {
         },
       });
 
+      // Should have 6 transactions:
+      // - 2 for contributions
+      // - 2 for platform tip (contributor -> Open Collective)
+      // - 2 for platform tip debt (host -> Open Collective)
       const originalTransactions = await order.getTransactions();
-      expect(originalTransactions).to.have.lengthOf(4);
+      expect(originalTransactions).to.have.lengthOf(6);
 
       await payments.createRefundTransaction(transaction, 0, null, user);
 
       const refundedTransactions = await order.getTransactions({ where: { isRefund: true } });
-      expect(refundedTransactions).to.have.lengthOf(4);
+      expect(refundedTransactions).to.have.lengthOf(6);
       expect(refundedTransactions.filter(t => t.kind === 'CONTRIBUTION')).to.have.lengthOf(2);
       expect(refundedTransactions.filter(t => t.kind === 'PLATFORM_TIP')).to.have.lengthOf(2);
+
+      // Todo: Check debt transactions and settlement status
     });
   }); /* createRefundTransaction */
 
