@@ -12,7 +12,6 @@ export const templateNames = [
   'announcement',
   'announcement.text',
   'archived.collective',
-  'email.approve',
   'email.message',
   'github.signup',
   'collective.apply',
