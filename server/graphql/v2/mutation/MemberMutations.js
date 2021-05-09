@@ -1,9 +1,11 @@
-import { GraphQLNonNull, GraphQLString } from 'graphql';
+import { GraphQLBoolean, GraphQLNonNull, GraphQLString } from 'graphql';
 import { pick } from 'lodash';
 
+import MemberRoles from '../../../constants/roles';
 import models from '../../../models';
 import { editPublicMessage } from '../../common/members';
-import { Unauthorized } from '../../errors';
+import { Forbidden, Unauthorized } from '../../errors';
+import { MemberRole } from '../enum';
 import { AccountReferenceInput, fetchAccountWithReference } from '../input/AccountReferenceInput';
 import { MemberInvitationInput } from '../input/MemberInvitationInput';
 import { Member } from '../object/Member';
@@ -55,12 +57,16 @@ const memberMutations = {
       },
     },
     async resolve(_, args, req) {
+      if (!req.remoteUser) {
+        throw new Unauthorized('You need to be logged in to invite a member.');
+      }
+
       let { memberAccount, account } = args.memberInvitation;
 
       memberAccount = await fetchAccountWithReference(memberAccount);
       account = await fetchAccountWithReference(account);
 
-      if (!req.remoteUser?.isAdminOfCollective(account)) {
+      if (!req.remoteUser.isAdminOfCollective(account)) {
         throw new Unauthorized('Only admins can send an invitation.');
       }
 
@@ -81,6 +87,47 @@ const memberMutations = {
       });
 
       return invitation;
+    },
+  },
+  removeMember: {
+    type: GraphQLBoolean,
+    description: 'Remove a member from the Collective',
+    args: {
+      memberAccount: {
+        type: GraphQLNonNull(AccountReferenceInput),
+        description: 'Reference to an account of member to remove',
+      },
+      account: {
+        type: GraphQLNonNull(AccountReferenceInput),
+        description: 'Reference to the Collective account',
+      },
+      role: {
+        type: MemberRole,
+        description: 'Role of member',
+      },
+    },
+    async resolve(_, args, req) {
+      if (!req.remoteUser) {
+        throw new Unauthorized('You need to be logged in to remove a member.');
+      }
+
+      let { memberAccount, account } = args;
+
+      memberAccount = await fetchAccountWithReference(memberAccount);
+      account = await fetchAccountWithReference(account);
+
+      if (!req.remoteUser.isAdminOfCollective(account)) {
+        throw new Unauthorized('Only admins can remove a member.');
+      }
+
+      if (![MemberRoles.ACCOUNTANT, MemberRoles.ADMIN, MemberRoles.MEMBER].includes(args.role)) {
+        throw new Forbidden('You can only remove accountants, admins, or members.');
+      }
+
+      // Remove member
+      await models.Member.update({ deletedAt: new Date() }, { where: { id: memberAccount.id } });
+
+      return true;
     },
   },
 };
