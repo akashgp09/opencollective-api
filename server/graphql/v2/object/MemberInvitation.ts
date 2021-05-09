@@ -1,6 +1,8 @@
 import { GraphQLInt, GraphQLObjectType, GraphQLString } from 'graphql';
 import { GraphQLDateTime } from 'graphql-iso-date';
 
+import { MemberRole } from '../enum/MemberRole';
+
 import { Collective } from './Collective';
 import { Tier } from './Tier';
 
@@ -11,9 +13,15 @@ export const MemberInvitation = new GraphQLObjectType({
     return {
       id: {
         type: GraphQLInt,
+        resolve(member) {
+          return member.id;
+        },
       },
       createdAt: {
         type: GraphQLDateTime,
+        resolve(member) {
+          return member.createdAt;
+        },
       },
       collective: {
         type: Collective,
@@ -28,10 +36,16 @@ export const MemberInvitation = new GraphQLObjectType({
         },
       },
       role: {
-        type: GraphQLString,
+        type: MemberRole,
+        resolve(member) {
+          return member.role;
+        },
       },
       description: {
         type: GraphQLString,
+        resolve(member) {
+          return member.description;
+        },
       },
       tier: {
         type: Tier,
